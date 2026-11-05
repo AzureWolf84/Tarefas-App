@@ -1,0 +1,27 @@
+{
+  "name": "Tarefas",
+  "short_name": "Tarefas",
+  "description": "Controle de tarefas pessoal, offline e sem envio de dados.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F3F6FA",
+  "theme_color": "#1B2F4B",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

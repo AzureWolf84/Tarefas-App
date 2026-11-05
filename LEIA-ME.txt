@@ -1,0 +1,10 @@
+TAREFAS — instalação como aplicativo (PWA)
+
+Conteúdo: index.html (o aplicativo), manifest.webmanifest, sw.js (funcionamento offline), icon-192.png e icon-512.png.
+
+1. Hospede a pasta inteira em HTTPS. Exemplos gratuitos: GitHub Pages, Netlify, Cloudflare Pages.
+   Para testar só no seu computador: rode um servidor local na pasta (por exemplo: python -m http.server 8000) e abra http://localhost:8000.
+2. No celular (Android/Chrome): menu > "Instalar aplicativo". No iPhone (Safari): Compartilhar > "Adicionar à Tela de Início".
+3. Abrir o arquivo index.html direto do disco funciona, mas não instala como aplicativo e não funciona offline.
+
+Os dados ficam somente no navegador. Ao atualizar a versão, troque os arquivos no servidor; o sw.js troca o cache quando o nome CACHE mudar.
