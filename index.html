@@ -93,6 +93,25 @@ main.wide{max-width:1200px}
 .bgc{display:grid;gap:8px;margin-top:4px}
 .sr{position:absolute;left:-9999px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* Desktop (≥1024 px): só afeta telas largas; celular e tablet não recebem estas regras */
+@media(min-width:1024px){
+ #app{grid-template:"n h" auto "n m" 1fr/232px 1fr}
+ header{padding:20px 32px}
+ h1{font-size:1.5rem}
+ nav{padding-top:16px}
+ nav button{padding:12px 22px;font-size:.98rem}
+ main{max-width:1180px;padding:28px 32px}
+ main.wide{max-width:1440px}
+ main ul:has(>li.card){grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+ .hoje{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;align-items:start}
+ .hoje ul:has(>li.card){grid-template-columns:1fr}
+ .card{padding:16px 18px}
+ .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+ .chart{height:260px}
+ .day{min-height:96px}
+ dialog{width:min(680px,100%)}
+ .ph{gap:16px}
+}
 </style>
 </head>
 <body>
@@ -408,7 +427,7 @@ function boot(){
  function vToday(){
   const c=sections(S.tasks),sec=(t,L)=>L.length?h('section',{},h('h2',{style:'font-size:1.05rem;margin:16px 0 8px'},t+' ('+L.length+')'),h('ul',{},...L.slice(0,S.lim.pn).map(card)),L.length>S.lim.pn?h('p',{class:'mut'},'Exibindo '+S.lim.pn+' de '+L.length+'. Use a aba Tarefas, com filtros, para ver todas.'):null):null;
   if(!c.overdue.length&&!c.today.length&&!c.next.length)return h('p',{class:'mut'},'Nada vencido, para hoje ou nos próximos 7 dias.');
-  return h('div',{},sec('Vencidas',c.overdue),sec('Hoje',c.today),sec('Próximos 7 dias',c.next))}
+  return h('div',{class:'hoje'},sec('Vencidas',c.overdue),sec('Hoje',c.today),sec('Próximos 7 dias',c.next))}
  const alt=$('alt');
  function showAlert(){const c=sections(S.tasks),it=[...c.overdue.map(t=>[t,'Vencida em '+fmt(t.dueDate)]),...c.today.map(t=>[t,'Para hoje'])];
   alt.replaceChildren(h('h2',{id:'attl'},'Pendências'),bk(),it.length?h('div',{},h('ul',{},...it.slice(0,50).map(([t,l])=>h('li',{class:'card'},h('div',{class:'grow'},h('div',{class:'t'},t.title),h('div',{class:'mut'},l))))),it.length>50?h('p',{class:'mut'},'… e mais '+(it.length-50)+' tarefa(s) no Painel Hoje.'):null):h('p',{class:'mut'},'Nenhuma tarefa vencida ou para hoje.'),
