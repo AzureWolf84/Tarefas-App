@@ -173,6 +173,30 @@ main.wide{max-width:1200px}
  .phs{border-radius:var(--bs-radius);padding:.875rem;border-color:var(--bd)}
  :focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 }
+/* >>> E16: acabamento profissional, divisórias e barra lateral responsiva (computador) */
+header{border-bottom:1px solid var(--bi);box-shadow:none}
+#nav{border-bottom:1px solid var(--bi)}
+main section+section{border-top:1px solid var(--bd);padding-top:14px;margin-top:14px}
+main ul:has(>li.card)>li.card{border-color:var(--bd);box-shadow:none}
+.card{border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+.btn{min-height:34px;border-radius:8px;font-weight:500;letter-spacing:.01em}
+.chip{border-radius:6px;font-weight:500}
+.mcard{border-radius:10px;box-shadow:0 1px 2px rgba(15,23,42,.08)}
+.mcard:hover{transform:translateY(-1px)}
+.mic .o{stroke-width:2.2}
+.mic .k{stroke-width:3}
+.mic .l{stroke-width:2.2}
+.catmk{margin-top:6px}
+.catmk summary{cursor:pointer;color:var(--ac);font-weight:500;font-size:.9rem}
+.catmk .row{margin-top:8px;align-items:center}
+.catmk input[type=color]{width:44px;height:36px;padding:2px}
+@media(min-width:1024px){
+ #app{grid-template:"h h" auto "n m" 1fr/clamp(180px,19vw,260px) minmax(0,1fr)}
+ #nav{flex-direction:column;flex-wrap:nowrap;gap:clamp(6px,1.1vh,12px);padding:clamp(10px,1.4vh,16px) clamp(10px,1vw,14px);overflow:auto;border-right:1px solid var(--bd);border-bottom:0;background:var(--sf);position:sticky;top:57px;height:calc(100dvh - 57px);align-self:start}
+ #nav button{width:100%;flex:0 0 auto;padding:clamp(6px,1.2vh,12px) clamp(6px,.8vw,10px);border-radius:10px;font-size:clamp(.78rem,.9vw,.95rem);gap:clamp(2px,.6vh,6px)}
+ #nav button .mic{width:clamp(30px,3.2vw,52px);height:auto}
+}
+/* <<< E16 */
 </style>
 </head>
 <body>
@@ -271,6 +295,8 @@ async function purgeNote(n){await Store.del('notes',n.id);S.notes=S.notes.filter
 async function purgeNotes(){const lim=Date.now()-trashDays()*864e5;let k=0;for(const n of S.notes.filter(x=>x.deletedAt&&Date.parse(x.deletedAt)<lim)){await purgeNote(n);k++}return k}
 const noteTitle=n=>(n.title||'').trim()||'Sem título';
 const noteLive=()=>S.notes.filter(n=>!n.deletedAt).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+function catOpts(){return [h('option',{value:''},'Sem categoria'),...S.cats.map(c=>h('option',{value:c.id},c.name))]}
+function catSelect(id,pick){const x=h('select',{id},...catOpts());x.value=pick||'';return x}
 /* Anexo da tarefa criada a partir de nota: foto ou PDF (RF33, RN24, CA31) */
 async function readAtt(x){
  if(x.type==='application/pdf'){
@@ -283,6 +309,10 @@ async function commitAtt(taskId,att){
  if(att.pending){const p=att.pending;await Store.filePut({id:uid(),taskId,kind:p.kind,name:p.name,mime:p.mime,size:p.size,createdAt:new Date().toISOString(),blob:p.blob});if(att.existing)await Store.fileDel(att.existing.id);att.existing=null;att.pending=null}
  else if(att.removed&&att.existing){await Store.fileDel(att.existing.id);att.existing=null}
  att.removed=false}
+async function estimateBackupMB(){
+ const rows=[...(await Store.photosAll()),...(await Store.filesAll())];
+ const raw=rows.reduce((a,r)=>a+(r.size||0),0);
+ return raw*4/3/1048576}
 /* Recompressão das fotos anexadas (não inclui o fundo, que fica no registro meta) */
 async function recompressPhotos(){
  const rows=await Store.photosAll();let n=0,skip=0,before=0,after=0;
@@ -607,6 +637,13 @@ function boot(){
     :h('p',{class:'mut'},'Nenhuma nota na lixeira.'))}
  function vTrash(){return h('div',{},vTrashTasks(),vTrashNotes())}
 
+ function catMaker(sel){
+  const nm=h('input',{placeholder:'Nome da nova categoria',maxlength:'40','aria-label':'Nome da nova categoria',autocomplete:'off'});
+  const co=h('input',{type:'color','aria-label':'Cor da nova categoria'});co.value='#1f4f94';
+  const er=h('div',{class:'err',role:'alert'});
+  const mk=h('button',{class:'btn pri',type:'button',onclick:()=>guard(async()=>{const r=await saveCat({name:nm.value,color:co.value});if(!r.ok){er.textContent=r.errors.name||r.errors.color;return}
+    sel.replaceChildren(...catOpts());sel.value=r.cat.id;nm.value='';er.textContent='';say('Categoria criada e selecionada.')})},'Criar e usar');
+  return h('details',{class:'catmk'},h('summary',{},'+ Nova categoria'),h('div',{class:'row'},nm,co,mk),er)}
  function attBlock(att,okP){
  const err=h('div',{class:'err',role:'alert'}),box=h('div',{class:'phs',style:'margin-top:4px'});
  const inp=h('input',{type:'file',accept:'image/jpeg,image/png,image/webp,application/pdf','aria-label':'Anexar foto ou PDF',disabled:!okP});
@@ -633,7 +670,7 @@ function boot(){
   const ex=h('textarea',{id:'cv-ex',rows:'8',maxlength:'5000'});ex.value=lines.slice(1).join('\n').trim();
   const pr=h('select',{id:'cv-pri'},...[1,2,3,4].map(i=>h('option',{value:i},PRI[i])));pr.value='2';
   const du=h('input',{type:'date',id:'cv-due'});
-  const ca=h('select',{id:'cv-cat'},h('option',{value:''},'Sem categoria'),...S.cats.map(c=>h('option',{value:c.id},c.name)));
+  const ca=catSelect('cv-cat','');
   const err=h('div',{class:'err',role:'alert'});
   const att={existing:null,pending:null,removed:false};
   const go=()=>guard(async()=>{
@@ -648,7 +685,7 @@ function boot(){
    h('p',{class:'mut'},'A nota continua existindo e fica vinculada à tarefa.'),
    h('label',{for:'cv-title'},'Título'),tt,
    h('label',{for:'cv-ex'},'Trecho que vira o texto da tarefa'),ex,
-   h('div',{class:'row'},h('div',{},h('label',{for:'cv-pri'},'Prioridade'),pr),h('div',{},h('label',{for:'cv-due'},'Prazo'),du),h('div',{},h('label',{for:'cv-cat'},'Categoria'),ca)),
+   h('div',{class:'row'},h('div',{},h('label',{for:'cv-pri'},'Prioridade'),pr),h('div',{},h('label',{for:'cv-due'},'Prazo'),du),h('div',{},h('label',{for:'cv-cat'},'Categoria'),ca,catMaker(ca))),
    attBlock(att,Store.photosOK()),
    err,
    h('div',{class:'row'},h('button',{class:'btn pri',type:'button',onclick:go},'Criar tarefa'),h('button',{class:'btn',type:'button',onclick:()=>conv.close()},'Cancelar')));
@@ -660,7 +697,6 @@ function boot(){
    ['today','Hoje','Vencidas, de hoje e dos próximos 7 dias, para decidir o que fazer agora.',ICO.hoje,c.overdue.length+c.today.length],
    ['tasks','Tarefas','Lista completa com busca, filtros, ordenação e checklist.',ICO.tarefas,open],
    ['kanban','Kanban','Acompanhe o fluxo: a fazer, em andamento e concluída.',ICO.kanban,null],
-   ['calendar','Calendário','Veja os prazos do mês e crie tarefas em um dia específico.',ICO.calendario,null],
    ['stats','Indicadores','Mede o que foi concluído, a pontualidade e a distribuição.',ICO.indicadores,null],
    ['cats','Categorias','Organize as tarefas por projeto ou área, com cores.',ICO.categorias,S.cats.length],
    ['trash','Lixeira','Restaure ou exclua definitivamente as tarefas removidas.',ICO.lixeira,trash],
@@ -747,7 +783,7 @@ function boot(){
  const bk=()=>{const b=backupStatus(S.settings,Date.now(),S.tasks.length+S.cats.length>0);return b.due?h('div',{class:'warn'},h('p',{style:'margin:0 0 8px'},b.days===null?'Nenhum backup foi exportado ainda.':'O último backup foi exportado há '+b.days+' dia(s).'),h('button',{class:'btn',type:'button',onclick:()=>{alt.close();exportNow()}},'Exportar backup agora')):null};
  const markBackup=()=>saveSettings({lastBackupAt:new Date().toISOString()});
  async function downloadBackup(){const obj=await buildBackupAsync();const u=URL.createObjectURL(new Blob([JSON.stringify(obj)],{type:'application/json'})),a=h('a',{href:u,download:'tarefas-backup-'+today()+'.json'});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),3000)}
- const exportNow=()=>guard(async()=>{await downloadBackup();await markBackup();render();say('Backup exportado.')});
+ const exportNow=()=>guard(async()=>{const est=await estimateBackupMB();if(est>100&&!confirm('O backup deve ter cerca de '+est.toFixed(0)+' MB por causa das fotos e PDFs. Em celulares, arquivos grandes podem demorar ou falhar na importação. Exportar mesmo assim?'))return;await downloadBackup();await markBackup();render();say('Backup exportado.')});
  const imp=$('imp');
  const doImp=(v,at)=>guard(async()=>{const d=v.data,ex=d.settings.lastBackupAt;d.settings.lastBackupAt=at&&(!ex||at>ex)?at:ex;await applyImport(d);imp.close();S.view='today';applyTheme();render();say('Backup importado: '+d.tasks.length+' tarefa(s) e '+d.categories.length+' categoria(s).')});
  function askImport(v){
@@ -805,7 +841,7 @@ function boot(){
    if(v==='yearly')return{type:v,month:due?+due.slice(5,7):0,day:due?+due.slice(8,10):0};
    if(v==='interval')return{type:v,n:+nI.value};
    return{type:v}};
-  f.categoryId=sel('categoryId',[['','Sem categoria'],...S.cats.map(c=>[c.id,c.name])],d.categoryId||'');
+  f.categoryId=catSelect('f-categoryId',d.categoryId||'');
   f.tags=h('input',{id:'f-tags',autocomplete:'off',placeholder:'Separe por vírgula'});f.tags.value=(d.tags||[]).join(', ');
   const subs=(d.subtasks||[]).map(x=>({...x})),sbox=h('ul'),addI=h('input',{id:'f-subtasks',maxlength:'200',placeholder:'Novo item do checklist',autocomplete:'off'});f.subtasks=addI;
   const drawS=()=>sbox.replaceChildren(...subs.map((x,i)=>{const ti=h('input',{'aria-label':'Item '+(i+1),maxlength:'200',oninput:()=>{x.title=ti.value}});ti.value=x.title;
@@ -841,7 +877,7 @@ function boot(){
    try{await commitAtt(r.task.id,att);await commitPhotos(r.task.id,stg)}catch(e){render();say('Tarefa salva, sem as fotos: '+e.message);alert('Tarefa salva, mas as fotos não foram gravadas: '+e.message);return}
    dlg.close();render();say(r.next?'Concluída. Próxima ocorrência: '+fmt(r.next.dueDate)+'.':'Tarefa salva.')})}},
    h('h2',{id:'dttl'},t?'Editar tarefa':'Nova tarefa'),
-   ...fld('title','Título',f.title),...fld('notes','Descrição / notas',f.notes),...fld('priority','Prioridade',f.priority),...fld('status','Status',f.status),...fld('dueDate','Prazo',f.dueDate),...fld('recurrence','Repetir',h('div',{},f.recurrence,rx)),...fld('categoryId','Categoria',f.categoryId),...fld('tags','Tags',f.tags),
+   ...fld('title','Título',f.title),...fld('notes','Descrição / notas',f.notes),...fld('priority','Prioridade',f.priority),...fld('status','Status',f.status),...fld('dueDate','Prazo',f.dueDate),...fld('recurrence','Repetir',h('div',{},f.recurrence,rx)),...fld('categoryId','Categoria',h('div',{},f.categoryId,catMaker(f.categoryId))),...fld('tags','Tags',f.tags),
    ...fld('subtasks','Checklist',h('div',{},sbox,h('div',{class:'row'},h('div',{class:'grow'},addI),h('button',{class:'btn',type:'button',onclick:addS},'Adicionar item')))),
    photoSec,
    d.noteId?attBlock(att,okP):null,
@@ -898,7 +934,7 @@ function boot(){
 
  function render(){
   {const IC={notes:ICO.notas,menu:ICO.menu,today:ICO.hoje,tasks:ICO.tarefas,kanban:ICO.kanban,calendar:ICO.calendario,stats:ICO.indicadores,cats:ICO.categorias,trash:ICO.lixeira,settings:ICO.ajustes};
-  $('nav').replaceChildren(...VIEWS.map(([k,l])=>h('button',{type:'button',hidden:!['notes','menu'].includes(k),'aria-current':S.view===k?'page':null,onclick:()=>{S.view=k;render();$('main').focus()}},svgIcon(IC[k]),h('span',{},l))));}
+  $('nav').replaceChildren(...VIEWS.map(([k,l])=>h('button',{type:'button',hidden:!['notes','menu','calendar'].includes(k),'aria-current':S.view===k?'page':null,onclick:()=>{S.view=k;render();$('main').focus()}},svgIcon(IC[k]),h('span',{},l))));}
   $('ttl').textContent=VIEWS.find(v=>v[0]===S.view)[1];$('add').hidden=!['today','tasks','kanban','calendar'].includes(S.view);$('bell').textContent='Pendências '+pend();$('bell').setAttribute('aria-label',pend()+' tarefa(s) vencida(s) ou para hoje');
   const warn=S.storage.startsWith('memória')?h('div',{class:'warn',role:'alert'},'Armazenamento persistente indisponível neste navegador: os dados serão perdidos ao fechar a página.'):null;
   $('main').className=['kanban','calendar'].includes(S.view)?'wide':'';
@@ -921,7 +957,7 @@ function boot(){
  setInterval(tick,30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden){tick();sync()}});addEventListener('focus',()=>{tick();sync()});
  load().then(()=>{applyTheme();applyBg();render();setupBC();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}}).catch(e=>{$('main').textContent='Falha ao iniciar: '+(e&&e.message||e)})}
 
-const api={validDate,vTask,vCat,Store,S,load,saveTask,toggleDone,removeTask,saveCat,removeCat,saveSettings,today,filterTasks,addD,newF,restoreTask,purgeTask,emptyTrash,purgeExpired,nextDate,dow,sections,recLabel,normRec,monthGrid,groupByDue,recompressPhotos,newNote,saveNote,setNoteDeleted,purgeNotes,purgeNote,noteLive,noteTitle,buildBackupAsync,checkStage,compressImage,commitPhotos,commitAtt,readAtt,validateBackup,buildBackup,applyImport,reloadState,backupStatus,completedSeries,punctuality,distribution,windowOf,fmtDT};
+const api={validDate,vTask,vCat,Store,S,load,saveTask,toggleDone,removeTask,saveCat,removeCat,saveSettings,today,filterTasks,addD,newF,restoreTask,purgeTask,emptyTrash,purgeExpired,nextDate,dow,sections,recLabel,normRec,monthGrid,groupByDue,recompressPhotos,estimateBackupMB,newNote,saveNote,setNoteDeleted,purgeNotes,purgeNote,noteLive,noteTitle,buildBackupAsync,checkStage,compressImage,commitPhotos,commitAtt,readAtt,validateBackup,buildBackup,applyImport,reloadState,backupStatus,completedSeries,punctuality,distribution,windowOf,fmtDT};
 if(typeof document==='undefined')globalThis.__TAREFAS__=api;else boot();
 })();
 </script>
