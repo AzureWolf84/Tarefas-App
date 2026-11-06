@@ -582,7 +582,7 @@ function boot(){
  const applyTheme=()=>{const t=S.settings.theme;document.documentElement.dataset.theme=t==='system'?(mq.matches?'dark':'light'):t};
  mq.addEventListener('change',applyTheme);
  const guard=async fn=>{try{return await fn()}catch(e){say('Falha ao gravar os dados.');alert('Falha ao gravar os dados: '+(e&&e.message||e))}};
- const VIEWS=[['notes','Notas'],['menu','Visão geral'],['today','Hoje'],['tasks','Tarefas'],['kanban','Kanban'],['calendar','Calendário'],['stats','Indicadores'],['cats','Categorias'],['trash','Lixeira'],['settings','Ajustes']];
+ const VIEWS=[['notes','Notas'],['tasks','Tarefas'],['menu','Visão geral'],['today','Hoje'],['kanban','Kanban'],['calendar','Calendário'],['stats','Indicadores'],['cats','Categorias'],['trash','Lixeira'],['settings','Ajustes']];
  const pend=()=>{const c=sections(S.tasks);return c.overdue.length+c.today.length};
  const chip=x=>x?h('span',{class:'chip'},x):null;
  const col=c=>okColor(c)?c:'#888888';
@@ -598,6 +598,7 @@ function boot(){
      h('ul',{},...sb.map(x=>h('li',{},h('label',{},h('input',{type:'checkbox',checked:x.done,onchange:()=>guard(async()=>{await saveTask({...t,subtasks:sb.map(y=>y.id===x.id?{...y,done:!y.done}:y)});render()})}),x.title))))):null),
    S.photoSet.has(t.id)?h('button',{class:'btn',type:'button',onclick:()=>openPhotos(t)},'Fotos'):null,
    h('button',{class:'btn',type:'button',onclick:()=>openTask(t)},'Editar'),
+   h('button',{class:'btn',type:'button',onclick:()=>duplicateTask(t)},'Duplicar'),
    h('button',{class:'btn dg',type:'button',onclick:()=>{if(confirm('Excluir a tarefa “'+t.title+'”? Ela ficará na lixeira por '+trashDays()+' dias.'))guard(async()=>{await removeTask(t);render();say('Tarefa movida para a lixeira.')})}},'Excluir'))};
  function vNotes(){
   const live=noteLive();
@@ -697,7 +698,6 @@ function boot(){
   const c=sections(S.tasks),open=S.tasks.filter(t=>!t.deletedAt&&t.status!=='done').length,trash=S.tasks.filter(t=>t.deletedAt).length;
   const items=[
    ['today','Hoje','Vencidas, de hoje e dos próximos 7 dias, para decidir o que fazer agora.',ICO.hoje,c.overdue.length+c.today.length],
-   ['tasks','Tarefas','Lista completa com busca, filtros, ordenação e checklist.',ICO.tarefas,open],
    ['kanban','Kanban','Acompanhe o fluxo: a fazer, em andamento e concluída.',ICO.kanban,null],
    ['stats','Indicadores','Mede o que foi concluído, a pontualidade e a distribuição.',ICO.indicadores,null],
    ['cats','Categorias','Organize as tarefas por projeto ou área, com cores.',ICO.categorias,S.cats.length],
@@ -818,6 +818,13 @@ function boot(){
      h('button',{class:'btn',type:'button',onclick:()=>guard(async()=>{await restoreTask(t);render();say('Tarefa restaurada.')})},'Restaurar'),
      h('button',{class:'btn dg',type:'button',onclick:()=>{if(confirm('Excluir definitivamente “'+t.title+'”?'))guard(async()=>{await purgeTask(t);render();say('Tarefa excluída definitivamente.')})}},'Excluir definitivamente'))})))}
 
+ async function duplicateTask(t){
+  return guard(async()=>{
+   const dup={title:(t.title+' (cópia)').slice(0,200),notes:t.notes||'',priority:t.priority,status:'todo',dueDate:t.dueDate||null,categoryId:t.categoryId||null,tags:[...(t.tags||[])],subtasks:(t.subtasks||[]).map(x=>({id:uid(),title:x.title,done:false})),recurrence:normRec(t.recurrence),noteId:null};
+   const r=await saveTask(dup);
+   if(!r.ok){say(Object.values(r.errors)[0]);return}
+   render();say('Tarefa duplicada. Edite a cópia se precisar de ajustes.');
+  })}
  async function openTask(t,pre){
   const d=t||{title:'',notes:'',priority:2,status:'todo',dueDate:'',categoryId:'',tags:[],subtasks:[],recurrence:null,...pre},f={};
   const okP=Store.photosOK(),ph=t&&okP?await Store.photosOf(t.id):[];
@@ -936,7 +943,7 @@ function boot(){
 
  function render(){
   {const IC={notes:ICO.notas,menu:ICO.menu,today:ICO.hoje,tasks:ICO.tarefas,kanban:ICO.kanban,calendar:ICO.calendario,stats:ICO.indicadores,cats:ICO.categorias,trash:ICO.lixeira,settings:ICO.ajustes};
-  $('nav').replaceChildren(...VIEWS.map(([k,l])=>h('button',{type:'button',hidden:!['notes','menu','calendar'].includes(k),'aria-current':S.view===k?'page':null,onclick:()=>{S.view=k;render();$('main').focus()}},svgIcon(IC[k]),h('span',{},l))));}
+  $('nav').replaceChildren(...VIEWS.map(([k,l])=>h('button',{type:'button',hidden:!['notes','tasks','menu','calendar'].includes(k),'aria-current':S.view===k?'page':null,onclick:()=>{S.view=k;render();$('main').focus()}},svgIcon(IC[k]),h('span',{},l))));}
   $('ttl').textContent=VIEWS.find(v=>v[0]===S.view)[1];$('add').hidden=!['today','tasks','kanban','calendar'].includes(S.view);$('bell').textContent='Pendências '+pend();$('bell').setAttribute('aria-label',pend()+' tarefa(s) vencida(s) ou para hoje');
   const warn=S.storage.startsWith('memória')?h('div',{class:'warn',role:'alert'},'Armazenamento persistente indisponível neste navegador: os dados serão perdidos ao fechar a página.'):null;
   $('main').className=['kanban','calendar'].includes(S.view)?'wide':'';
