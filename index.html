@@ -211,6 +211,17 @@ header{background:linear-gradient(rgba(7,14,26,.62),rgba(7,14,26,.62)),url(data:
  li.card>.grow{flex:1 1 200px;min-width:0}
  li.card>.btn{flex:0 0 auto}
 }
+/* Aparelhos de toque com tela grande (tablet): navegação em linha no topo, como no celular. A barra lateral fica só para computadores com mouse. */
+@media(min-width:1024px) and (pointer:coarse){
+ #app{grid-template:"h" auto "n" auto "m" 1fr/1fr}
+ #nav{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;position:sticky;top:0;height:auto;align-self:auto;padding:8px 10px;gap:8px;border-right:0;border-bottom:1px solid var(--bi);background:var(--sf)}
+ #nav button{width:auto;flex:0 0 auto;min-width:88px;padding:6px 8px;border-radius:10px;font-size:.78rem;display:flex;flex-direction:column;align-items:center;gap:2px}
+ #nav button .mic{width:46px;height:30px}
+}
+/* Caneta (E22/E24): folhas pautadas, barra de ferramentas e área de desenho */
+.ruled{position:relative;border:1px solid var(--bi);border-radius:8px;min-height:360px;max-height:70vh;overflow:auto;background-color:var(--sf);background-image:linear-gradient(to bottom,transparent 39px,var(--bd) 39px),linear-gradient(to right,transparent 56px,#d9534f 56px,#d9534f 57px,transparent 57px);background-size:100% 40px,100% 100%;background-position:0 0,0 0;background-repeat:repeat,no-repeat}
+.inkcv{display:block;width:100%;height:600px;touch-action:none;cursor:crosshair}
+.inkbar{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
 /* <<< E16 */
 </style>
 </head>
@@ -297,7 +308,7 @@ async function buildBackupAsync(){
  return o}
 /* Bloco de notas (RF27–RF31, RN19–RN20, CA25–CA28, CA35) */
 const NOTE_MAX=20000,NT_MAX=120;
-const newNote=()=>{const now=new Date().toISOString();return{id:uid(),title:'',text:'',createdAt:now,updatedAt:now,deletedAt:null,taskId:null}};
+const newNote=()=>{const now=new Date().toISOString();return{id:uid(),title:'',text:'',ink:[],createdAt:now,updatedAt:now,deletedAt:null,taskId:null}};
 async function saveNote(n){const e={};
  if((n.title||'').length>NT_MAX)e.title='Título com no máximo 120 caracteres.';
  if((n.text||'').length>NOTE_MAX)e.text='Texto com no máximo 20.000 caracteres.';
@@ -328,6 +339,58 @@ async function estimateBackupMB(){
  const rows=[...(await Store.photosAll()),...(await Store.filesAll())];
  const raw=rows.reduce((a,r)=>a+(r.size||0),0);
  return raw*4/3/1048576}
+/* Mesclagem de backup (E23): acrescenta o backup aos dados atuais, sem apagar nada.
+   Tarefa com o mesmo id: vence a mais avançada (status, depois % do checklist, depois edição mais recente).
+   Categoria: unida pelo nome (sem acento e sem maiúsculas). Configurações: ignoradas.
+   Exclusão prevalece: item excluído em qualquer lado permanece excluído. */
+async function mergeBackup(d){
+ const rank=t=>[({todo:0,doing:1,done:2})[t.status]||0,(t.subtasks||[]).length?(t.subtasks.filter(x=>x.done).length/t.subtasks.length):0,t.updatedAt||''];
+ const cmp=(a,b)=>{for(let i=0;i<3;i++){if(a[i]>b[i])return 1;if(a[i]<b[i])return -1}return 0};
+ const catMap={},byName=new Map(S.cats.map(c=>[fold(c.name),c])),idsLocal=new Set(S.cats.map(c=>c.id));const newCats=[];
+ for(const c of d.categories){const ex=byName.get(fold(c.name));if(ex){catMap[c.id]=ex.id;continue}
+  const id=idsLocal.has(c.id)?uid():c.id;catMap[c.id]=id;const nc={...c,id};newCats.push(nc);byName.set(fold(nc.name),nc);idsLocal.add(id)}
+ const tById=new Map(S.tasks.map(t=>[t.id,t]));const tOut=[];
+ for(const t0 of d.tasks){const t={...t0,categoryId:t0.categoryId?(catMap[t0.categoryId]||null):null};const loc=tById.get(t.id);
+  if(!loc){tOut.push(t);continue}
+  const win=cmp(rank(t),rank(loc))>0?t:loc;
+  tOut.push({...win,deletedAt:loc.deletedAt||t.deletedAt||null})}
+ const tIds=new Set([...S.tasks.map(t=>t.id),...d.tasks.map(t=>t.id)]);
+ const nById=new Map(S.notes.map(n=>[n.id,n]));const nOut=[];
+ for(const n of d.notes||[]){const loc=nById.get(n.id);
+  if(!loc){nOut.push(n);continue}
+  const win=(n.updatedAt||'')>(loc.updatedAt||'')?n:loc;
+  nOut.push({...win,deletedAt:loc.deletedAt||n.deletedAt||null})}
+ const notesFinal=[...S.notes.filter(n=>!nOut.some(x=>x.id===n.id)),...nOut].map(n=>({...n,taskId:n.taskId&&tOut.some(t=>t.id===n.taskId)?n.taskId:null}));
+ for(const c of newCats)await Store.put('categories',c);
+ for(const x of notesFinal)await Store.put('notes',x);
+ if(tOut.length)await Store.putMany('tasks',tOut);
+ const localPh=await Store.photosAll(),phKeys=new Set(localPh.map(p=>p.taskId+'|'+p.slot));
+ const phIds=new Set(localPh.map(p=>p.id));
+ for(const p of d.photos||[]){if(!tOut.some(t=>t.id===p.taskId)||phKeys.has(p.taskId+'|'+p.slot)||phIds.has(p.id))continue;await Store.photoPut(p);phKeys.add(p.taskId+'|'+p.slot)}
+ const localFl=await Store.filesAll(),flTasks=new Set(localFl.map(f=>f.taskId));
+ const flIds=new Set(localFl.map(f=>f.id));
+ for(const f of d.files||[]){if(!tOut.some(t=>t.id===f.taskId)||flTasks.has(f.taskId)||flIds.has(f.id))continue;await Store.filePut(f);flTasks.add(f.taskId)}
+ await reloadState();S.nsel=null;
+ return{tasks:tOut.length,cats:newCats.length,notes:nOut.length}}
+/* ===== Caneta S Pen e conversão (E22/E24) ===== */
+const INK_UNIT=1000;
+function validInk(ink){
+ if(!Array.isArray(ink)||ink.length>5000)return false;let pts=0;
+ for(const st of ink){
+  if(!st||typeof st!=='object'||!Number.isFinite(st.w)||st.w<0.5||st.w>40||!Array.isArray(st.p)||st.p.length<1||st.p.length>5000)return false;
+  pts+=st.p.length;if(pts>200000)return false;
+  for(const p of st.p){if(!Array.isArray(p)||p.length!==3||!p.every(Number.isFinite)||p[0]<-50||p[0]>INK_UNIT+50||p[1]<-50||p[1]>1e6||p[2]<0||p[2]>1)return false}}
+ return true}
+async function inkToImage(ink){
+ let maxY=200;for(const st of ink)for(const p of st.p)if(p[1]>maxY)maxY=p[1];
+ const scale=Math.min(1,1280/INK_UNIT);
+ const c=document.createElement('canvas');c.width=Math.round(INK_UNIT*scale);c.height=Math.round((maxY+40)*scale);
+ const cx=c.getContext('2d');cx.fillStyle='#ffffff';cx.fillRect(0,0,c.width,c.height);
+ cx.lineCap='round';cx.lineJoin='round';cx.strokeStyle='#111111';
+ for(const st of ink){for(let i=1;i<st.p.length;i++){const a=st.p[i-1],b=st.p[i];cx.lineWidth=st.w*(0.4+((a[2]+b[2])/2)*1.2)*scale;cx.beginPath();cx.moveTo(a[0]*scale,a[1]*scale);cx.lineTo(b[0]*scale,b[1]*scale);cx.stroke()}
+  if(st.p.length===1){cx.lineWidth=st.w*scale;cx.beginPath();cx.arc(st.p[0][0]*scale,st.p[0][1]*scale,st.w*scale/2,0,Math.PI*2);cx.fillStyle='#111111';cx.fill()}}
+ for(const q of [0.85,0.7,0.55]){const b=await new Promise(r=>c.toBlob(r,'image/jpeg',q));if(b&&b.size<=PH_MAX)return{blob:b,mime:'image/jpeg',w:c.width,h:c.height,size:b.size}}
+ throw new Error('Desenho acima de 500 KB. Escreva menos ou divida em duas notas.')}
 /* Recompressão das fotos anexadas (não inclui o fundo, que fica no registro meta) */
 async function recompressPhotos(){
  const rows=await Store.photosAll();let n=0,skip=0,before=0,after=0;
@@ -413,7 +476,8 @@ function validateBackup(o){
    if(typeof n.title!=='string'||n.title.length>120){add(w+'título inválido (máximo de 120 caracteres).');return}
    if(typeof n.text!=='string'||n.text.length>20000){add(w+'texto inválido (máximo de 20.000 caracteres).');return}
    if(!isIso(n.createdAt)||!isIso(n.updatedAt)||!nul(n.deletedAt,isIso)||!nul(n.taskId,x=>isS(x,100))){add(w+'datas ou vínculo inválidos.');return}
-   notesOut.push({id:n.id,title:n.title,text:n.text,createdAt:n.createdAt,updatedAt:n.updatedAt,deletedAt:n.deletedAt,taskId:n.taskId})});
+   if(n.ink!==undefined&&!validInk(n.ink)){add(w+'desenho da caneta inválido.');return}
+   notesOut.push({id:n.id,title:n.title,text:n.text,createdAt:n.createdAt,updatedAt:n.updatedAt,deletedAt:n.deletedAt,taskId:n.taskId,ink:n.ink||[]})});
   if(Array.isArray(nIn)){const ids=new Set(notesOut.map(x=>x.id));tasks.forEach(x=>{if(x.noteId&&!ids.has(x.noteId))x.noteId=null});notesOut.forEach(x=>{if(x.taskId&&!tasks.some(t=>t.id===x.taskId))x.taskId=null})}
   const fIn=o.files===undefined?[]:o.files,filesOut=[],fTask=new Set();
   if(!Array.isArray(fIn)||fIn.length>5000)add('Lista de anexos inválida ou acima do limite de 5.000.');
@@ -541,7 +605,7 @@ const Store={ad:null,notify:null,
  async bgGet(){return Store.photosOK()?Store.ad.bgGet():null}};
 
 /* Estado e ações (persiste primeiro; o estado só muda se a gravação der certo) */
-const DS={theme:'system',schemaVersion:SV,trashDays:30,backupAlertDays:7,lastBackupAt:null,bgOpacity:88};
+const DS={theme:'system',schemaVersion:SV,trashDays:30,backupAlertDays:7,lastBackupAt:null,bgOpacity:88,noteMode:'texto'};
 const LIMS={list:50,kanban:25,trash:50,pn:30};
 const newF=()=>({q:'',status:'',cat:'',pri:'',tag:'',due:'',sort:'due'});
 const dk=a=>a.dueDate||'9999';
@@ -613,36 +677,107 @@ function boot(){
    h('button',{class:'btn',type:'button',onclick:()=>openTask(t)},'Editar'),
    h('button',{class:'btn',type:'button',onclick:()=>duplicateTask(t)},'Duplicar'),
    h('button',{class:'btn dg',type:'button',onclick:()=>{if(confirm('Excluir a tarefa “'+t.title+'”? Ela ficará na lixeira por '+trashDays()+' dias.'))guard(async()=>{await removeTask(t);render();say('Tarefa movida para a lixeira.')})}},'Excluir'))};
- function vNotes(){
+ function openLinesConvert(note){
+  const conv=$('conv');
+  const lines=(note.text||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  if(!lines.length){say('A nota não tem linhas de texto para virar tarefas.');return}
+  const boxes=lines.map((ln,i)=>({cb:h('input',{type:'checkbox',checked:true,'aria-label':'Linha '+(i+1)}),ln}));
+  const pr=h('select',{id:'lv-pri'},...[1,2,3,4].map(i=>h('option',{value:i},PRI[i])));pr.value='2';
+  const du=h('input',{type:'date',id:'lv-due'});
+  const ca=catSelect('lv-cat','');
+  const err=h('div',{class:'err',role:'alert'});
+  const go=()=>guard(async()=>{
+   const sel=boxes.filter(b=>b.cb.checked);
+   if(!sel.length){err.textContent='Marque ao menos uma linha.';return}
+   let feitas=0;
+   for(const b of sel){const r=await saveTask({title:b.ln.slice(0,200),notes:'',priority:+pr.value,status:'todo',dueDate:du.value||null,categoryId:ca.value||null,tags:[],subtasks:[],recurrence:null,noteId:note.id});
+    if(!r.ok){err.textContent=(feitas?feitas+' tarefa(s) já foram criadas. ':'')+Object.values(r.errors)[0];render();return}feitas++}
+   conv.close();S.view='tasks';render();say(sel.length+' tarefa(s) criada(s) a partir da nota.');
+  });
+  conv.replaceChildren(h('h2',{id:'cvttl'},'Uma tarefa por linha'),
+   h('p',{class:'mut'},'Marque as linhas que viram tarefas. A nota continua inteira.'),
+   ...boxes.map(b=>h('label',{style:'display:flex;gap:8px;align-items:center;margin:6px 0;font-weight:400'},b.cb,h('span',{},b.ln))),
+   h('label',{for:'lv-pri'},'Prioridade'),pr,
+   h('label',{for:'lv-due'},'Prazo'),du,
+   h('label',{for:'lv-cat'},'Categoria'),ca,catMaker(ca),
+   err,
+   h('div',{class:'row'},h('button',{class:'btn pri',type:'button',onclick:go},'Criar tarefas'),h('button',{class:'btn',type:'button',onclick:()=>conv.close()},'Cancelar')));
+  conv.showModal()}
+
+function vNotes(){
   const live=noteLive();
   if(S.nsel&&!live.some(n=>n.id===S.nsel))S.nsel=null;
   if(!S.nsel&&live[0])S.nsel=live[0].id;
+  const mode=S.settings.noteMode==='caneta'?'caneta':'texto';
   const list=h('div',{class:'nlist','aria-label':'Lista de notas'});
   const drawList=()=>{const f=fold((S.nq||'').trim());const L=noteLive().filter(n=>!f||fold(noteTitle(n)+' '+(n.text||'')).includes(f));
    list.replaceChildren(...(L.length?L.map(n=>h('button',{class:'nitem'+(n.id===S.nsel?' on':''),type:'button',onclick:()=>{S.nsel=n.id;render()}},
-     h('span',{class:'nt'},noteTitle(n)),h('span',{class:'nm'},fmtDT(n.updatedAt)+' · '+(((n.text||'').replace(/\s+/g,' ')).slice(0,60)||'Sem texto'))))
+     h('span',{class:'nt'},noteTitle(n)),h('span',{class:'nm'},fmtDT(n.updatedAt)+' · '+(((n.text||'').replace(/\s+/g,' ')).slice(0,60)||(n.ink&&n.ink.length?'Desenho à caneta':'Sem texto')))))
     :[h('p',{class:'mut'},live.length?'Nenhuma nota corresponde à busca.':'Nenhuma nota ainda.')]))};
   drawList();
   const q=h('input',{type:'search','aria-label':'Buscar nas notas',placeholder:'Buscar nas notas…',oninput:()=>{S.nq=q.value;drawList()}});q.value=S.nq||'';
+  const modeBtn=h('button',{class:'btn',type:'button','aria-pressed':mode==='caneta'?'true':'false',onclick:()=>guard(async()=>{await saveSettings({noteMode:mode==='caneta'?'texto':'caneta'});render();say('Modo de edição: '+(mode==='caneta'?'texto':'caneta')+'.')})},'Modo: '+(mode==='caneta'?'Caneta':'Texto'));
   const ed=h('div',{class:'neditor'});
   const n=live.find(x=>x.id===S.nsel);
   if(!n)ed.append(h('p',{class:'mut'},'Nenhuma nota selecionada. Use “+ Nova nota” para começar.'));
   else{
-   let cur={...n},timer=null;
+   let cur={...n,ink:(n.ink||[]).map(st=>({...st,p:st.p.map(p=>[...p])}))},timer=null;
    const st=h('span',{class:'mut',role:'status'},'Salvo');
    const t=h('input',{type:'text',class:'ntitle','aria-label':'Título da nota',maxlength:'120',placeholder:'Título'});t.value=n.title||'';
-   const x=h('textarea',{class:'ntext','aria-label':'Texto da nota',maxlength:'20000',placeholder:'Escreva aqui…'});x.value=n.text||'';
-   const schedule=()=>{st.textContent='Salvando…';clearTimeout(timer);timer=setTimeout(()=>{guard(async()=>{const r=await saveNote({...cur,title:t.value,text:x.value});if(!r.ok){st.textContent='Não salvo';say(Object.values(r.errors)[0]);return}cur=r.note;st.textContent='Salvo';drawList()})},500)};
-   t.addEventListener('input',schedule);x.addEventListener('input',schedule);
+   const persist=()=>guard(async()=>{const r=await saveNote({...cur,title:t.value});if(!r.ok){st.textContent='Não salvo';say(Object.values(r.errors)[0]);return}cur=r.note;st.textContent='Salvo';drawList()});
+   const schedule=()=>{st.textContent='Salvando…';clearTimeout(timer);timer=setTimeout(persist,500)};
+   t.addEventListener('input',schedule);
    const lt=n.taskId?S.tasks.find(x=>x.id===n.taskId&&!x.deletedAt):null;
    const link=lt?h('div',{class:'nlink'},h('span',{class:'chip'},'Tarefa: '+lt.title+' · '+(lt.status==='done'?'concluída':'aberta')),h('button',{class:'btn',type:'button',onclick:()=>openTask(lt)},'Ver tarefa'))
-    :n.taskId?h('div',{class:'nlink'},h('span',{class:'chip'},'Tarefa vinculada foi excluída; o texto da nota foi mantido.')):
-    h('div',{class:'nlink'},h('button',{class:'btn',type:'button',onclick:()=>{clearTimeout(timer);guard(async()=>{const r=await saveNote({...cur,title:t.value,text:x.value});if(!r.ok){say(Object.values(r.errors)[0]);return}cur=r.note;openConvert(r.note)})}},'Virar tarefa'));
-   ed.append(link);
-   ed.append(h('div',{class:'nedtop'},st,h('button',{class:'btn dg',type:'button',onclick:()=>{if(!confirm('Mover esta nota para a lixeira? Ela fica disponível por '+trashDays()+' dias.'))return;clearTimeout(timer);guard(async()=>{await setNoteDeleted(cur,true);S.nsel=null;render();say('Nota movida para a lixeira.')})}},'Excluir nota')),t,x);
+    :n.taskId?h('div',{class:'nlink'},h('span',{class:'chip'},'Tarefa vinculada foi excluída; o texto da nota foi mantido.')):null;
+   const delBtn=h('button',{class:'btn dg',type:'button',onclick:()=>{if(!confirm('Mover esta nota para a lixeira? Ela fica disponível por '+trashDays()+' dias.'))return;clearTimeout(timer);guard(async()=>{await setNoteDeleted(cur,true);S.nsel=null;render();say('Nota movida para a lixeira.')})}},'Excluir nota');
+   if(mode==='texto'){
+    const x=h('textarea',{class:'ntext','aria-label':'Texto da nota',maxlength:'20000',placeholder:'Escreva aqui…'});x.value=n.text||'';
+    x.addEventListener('input',()=>{cur={...cur,text:x.value};schedule()});
+    const acts=[];
+    if(!lt&&!n.taskId)acts.push(h('button',{class:'btn',type:'button',onclick:()=>{clearTimeout(timer);guard(async()=>{const r=await saveNote({...cur,title:t.value,text:x.value});if(!r.ok){say(Object.values(r.errors)[0]);return}cur=r.note;openConvert(r.note)})}},'Virar tarefa'));
+    if(!lt&&!n.taskId&&(x.value||'').includes('\n'))acts.push(h('button',{class:'btn',type:'button',onclick:()=>{clearTimeout(timer);guard(async()=>{const r=await saveNote({...cur,title:t.value,text:x.value});if(!r.ok){say(Object.values(r.errors)[0]);return}cur=r.note;openLinesConvert(r.note)})}},'Uma tarefa por linha'));
+    ed.append(h('div',{class:'nedtop'},st,modeBtn,delBtn));
+    if(link)ed.append(link);else if(acts.length)ed.append(h('div',{class:'nlink'},...acts));
+    ed.append(t,x);
+   }else{
+    /* Modo caneta: traços vetoriais com pressão; dedo não desenha (rolagem). */
+    const wrap=h('div',{class:'ruled'});
+    const cv=h('canvas',{class:'inkcv','aria-label':'Área de desenho à caneta'});
+    wrap.append(cv);
+    let tool='pen',drawing=null,undoS=[],redoS=[];
+    const clone=v=>v.map(st=>({...st,p:st.p.map(p=>[...p])}));
+    const draw=()=>{const ctx=cv.getContext('2d');if(!ctx)return;const cssW=cv.clientWidth||600,cssH=Math.max(360,(cv.clientHeight||360));
+     const dpr=(typeof devicePixelRatio==='number'&&devicePixelRatio>0)?devicePixelRatio:1,unit=cssW/INK_UNIT;
+     cv.width=Math.round(cssW*dpr);cv.height=Math.round(cssH*dpr);ctx.setTransform(dpr*unit,0,0,dpr*unit,0,0);ctx.clearRect(0,0,INK_UNIT,cssH/unit);
+     ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#1f4f94';
+     for(const st of cur.ink){for(let i=1;i<st.p.length;i++){const a=st.p[i-1],b=st.p[i];ctx.lineWidth=st.w*(0.4+((a[2]+b[2])/2)*1.2);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke()}}};
+    const save=()=>{st.textContent='Salvando…';clearTimeout(timer);timer=setTimeout(persist,500)};
+    const snap=()=>{undoS.push(clone(cur.ink));if(undoS.length>60)undoS.shift();redoS=[]};
+    const pt=e=>{const r=cv.getBoundingClientRect(),unit=INK_UNIT/(r.width||INK_UNIT);return[Math.max(0,Math.min(INK_UNIT,(e.clientX-r.left)*unit)),Math.max(0,(e.clientY-r.top)*unit),(e.pressure>0?e.pressure:0.5)]};
+    const eraseAt=(x,y)=>{const before=cur.ink.length;cur={...cur,ink:cur.ink.filter(st=>!st.p.some(p=>Math.hypot(p[0]-x,p[1]-y)<14))};return cur.ink.length!==before};
+    cv.addEventListener('pointerdown',e=>{if(e.pointerType==='touch')return;e.preventDefault();cv.setPointerCapture&&cv.setPointerCapture(e.pointerId);const[x,y,pr]=pt(e);snap();
+      if(tool==='eraser'){eraseAt(x,y);draw();return}
+      drawing={w:3,p:[[x,y,pr]]};cur={...cur,ink:[...cur.ink,drawing]};draw()});
+    cv.addEventListener('pointermove',e=>{if(e.pointerType==='touch'||!drawing&&tool!=='eraser')return;const[x,y,pr]=pt(e);
+      if(tool==='eraser'){if(e.buttons&&eraseAt(x,y)){draw()}return}
+      if(drawing){drawing.p.push([x,y,pr]);draw()}});
+    const end=e=>{if(drawing){drawing=null;save()}else if(tool==='eraser'){save()}};
+    cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);
+    const bar=h('div',{class:'inkbar'},
+     h('button',{class:'btn'+(tool==='pen'?' pri':''),type:'button',onclick:()=>{tool='pen';render()}},'Caneta'),
+     h('button',{class:'btn'+(tool==='eraser'?' pri':''),type:'button',onclick:()=>{tool='eraser';render()}},'Borracha'),
+     h('button',{class:'btn',type:'button',disabled:!undoS.length,onclick:()=>{if(!undoS.length)return;redoS.push(clone(cur.ink));cur={...cur,ink:undoS.pop()};draw();save()}},'Desfazer'),
+     h('button',{class:'btn',type:'button',disabled:!redoS.length,onclick:()=>{if(!redoS.length)return;undoS.push(clone(cur.ink));cur={...cur,ink:redoS.pop()};draw();save()}},'Refazer'),
+     h('button',{class:'btn dg',type:'button',disabled:!cur.ink.length,onclick:()=>{if(!cur.ink.length||!confirm('Apagar todo o desenho desta nota?'))return;snap();cur={...cur,ink:[]};draw();save()}},'Limpar'),
+     h('button',{class:'btn',type:'button',disabled:!cur.ink.length,onclick:()=>{clearTimeout(timer);guard(async()=>{const r=await saveNote({...cur,title:t.value});if(!r.ok){say(Object.values(r.errors)[0]);return}cur=r.note;let img;try{img=await inkToImage(cur.ink)}catch(e){say(e.message);alert(e.message);return}openConvert(r.note,{att:{kind:'photo',mime:img.mime,name:'desenho.jpg',size:img.size,blob:img.blob}})})}},'Virar tarefa (desenho)'));
+    ed.append(h('div',{class:'nedtop'},st,modeBtn,delBtn));
+    if(link)ed.append(link);
+    ed.append(t,bar,wrap);
+    setTimeout(draw,0);
+   }
   }
   return h('div',{},h('div',{class:'nbar'},q,h('button',{class:'btn pri',type:'button',onclick:()=>newNoteNow()},'+ Nova nota (Ctrl+N)')),h('div',{class:'nsplit'},list,ed))}
-
  function vTrashNotes(){
   const L=S.notes.filter(n=>n.deletedAt).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt));
   return h('div',{},h('h2',{style:'font-size:1.05rem;margin:20px 0 8px'},'Notas na lixeira ('+L.length+')'),
@@ -679,7 +814,7 @@ function boot(){
  return h('fieldset',{style:'border:0;padding:0;margin:14px 0 0'},h('legend',{style:'font-weight:600;margin-bottom:4px'},'Anexo da tarefa criada a partir da nota'),
   okP?null:h('p',{class:'warn'},'Anexos indisponíveis neste navegador (requer IndexedDB).'),inp,box,err)}
 
- function openConvert(note){
+ function openConvert(note,pre){
   const conv=$('conv');
   const lines=(note.text||'').split('\n');
   const tt=h('input',{id:'cv-title',maxlength:'200',autocomplete:'off'});tt.value=(lines[0]||'').trim().slice(0,200);
@@ -688,7 +823,7 @@ function boot(){
   const du=h('input',{type:'date',id:'cv-due'});
   const ca=catSelect('cv-cat','');
   const err=h('div',{class:'err',role:'alert'});
-  const att={existing:null,pending:null,removed:false};
+  const att={existing:null,pending:(pre&&pre.att)||null,removed:false};
   const go=()=>guard(async()=>{
    const title=tt.value.trim();if(!title){err.textContent='Informe o título.';tt.focus();return}
    const r=await saveTask({title,notes:ex.value,priority:+pr.value,status:'todo',dueDate:du.value||null,categoryId:ca.value||null,tags:[],subtasks:[],recurrence:null,noteId:note.id});
@@ -802,10 +937,11 @@ function boot(){
  const imp=$('imp');
  const doImp=(v,at)=>guard(async()=>{const d=v.data,ex=d.settings.lastBackupAt;d.settings.lastBackupAt=at&&(!ex||at>ex)?at:ex;await applyImport(d);imp.close();S.view='today';applyTheme();render();say('Backup importado: '+d.tasks.length+' tarefa(s) e '+d.categories.length+' categoria(s).')});
  function askImport(v){
-  imp.replaceChildren(h('h2',{id:'ittl'},'Substituir todos os dados?'),
+  imp.replaceChildren(h('h2',{id:'ittl'},'Importar backup'),
    h('p',{},'O arquivo contém '+v.summary.tasks+' tarefa(s) e '+v.summary.cats+' categoria(s)'+(v.summary.photos?' e '+v.summary.photos+' foto(s)':'')+(v.summary.exportedAt?', exportado em '+fmtDT(v.summary.exportedAt):'')+'.'),
-   h('p',{class:'warn'},'Todos os dados atuais ('+S.tasks.length+' tarefa(s), '+S.cats.length+' categoria(s)) serão substituídos. Não é possível desfazer.'),
-   h('div',{class:'row'},h('button',{class:'btn pri',type:'button',onclick:async()=>{const t=new Date().toISOString();await downloadBackup();doImp(v,t)}},'Baixar backup atual e substituir'),h('button',{class:'btn dg',type:'button',onclick:()=>doImp(v,null)},'Substituir sem backup'),h('button',{class:'btn',type:'button',onclick:()=>imp.close()},'Cancelar')));imp.showModal()}
+   h('p',{class:'warn'},'Mesclar preserva os dados atuais e acrescenta o backup. Substituir apaga os dados atuais e não pode ser desfeito.'),
+   h('div',{class:'row'},h('button',{class:'btn pri',type:'button',onclick:async()=>{const t=new Date().toISOString();await downloadBackup();doImp(v,t)}},'Baixar backup atual e substituir'),h('button',{class:'btn pri',type:'button',onclick:()=>guard(async()=>{const r=await mergeBackup(v.data);imp.close();render();say('Backup mesclado: '+r.tasks+' tarefa(s), '+r.cats+' categoria(s) nova(s).')})},'Mesclar com os dados atuais'),
+   h('button',{class:'btn dg',type:'button',onclick:()=>doImp(v,null)},'Substituir sem backup'),h('button',{class:'btn',type:'button',onclick:()=>imp.close()},'Cancelar')));imp.showModal()}
 
  function vStats(){
   const td=today(),st=S.st,ser=completedSeries(S.tasks,st.period,td),tot=ser.reduce((a,b)=>a+b.count,0),pu=punctuality(S.tasks,st.period,td),ds=distribution(S.tasks,st.scope,S.cats);
@@ -952,7 +1088,7 @@ function boot(){
    h('div',{class:'row'},h('button',{class:'btn pri',type:'button',onclick:exportNow},'Exportar backup (JSON)'),h('button',{class:'btn',type:'button',onclick:()=>$('imf').click()},'Importar backup…')),
    h('label',{for:'s-bk'},'Avisar quando o último backup tiver mais de (dias)'),dn,
    h('p',{class:'mut'},'A importação substitui todos os dados atuais. O arquivo de backup fica em texto claro: guarde-o em local seguro.'),
-   h('p',{class:'mut'},'Se você mover ou renomear este arquivo, alguns navegadores passam a tratá-lo como um novo local de armazenamento e os dados deixam de aparecer: exporte um backup antes.'),h('p',{class:'mut'},'Armazenamento em uso: '+S.storage+'.'),h('p',{class:'mut'},'Os dados ficam somente neste navegador. O aplicativo não faz requisições de rede.'),h('p',{class:'mut'},'Tarefas v1.2 · build final (E14)'))}
+   h('p',{class:'mut'},'Se você mover ou renomear este arquivo, alguns navegadores passam a tratá-lo como um novo local de armazenamento e os dados deixam de aparecer: exporte um backup antes.'),h('p',{class:'mut'},'Armazenamento em uso: '+S.storage+'.'),h('p',{class:'mut'},'Os dados ficam somente neste navegador. O aplicativo não faz requisições de rede.'),h('p',{class:'mut'},'Tarefas v1.3 · mesclagem de backup (E23)'))}
 
  function render(){
   {const IC={notes:ICO.notas,menu:ICO.menu,today:ICO.hoje,tasks:ICO.tarefas,kanban:ICO.kanban,calendar:ICO.calendario,stats:ICO.indicadores,cats:ICO.categorias,trash:ICO.lixeira,settings:ICO.ajustes};
@@ -979,7 +1115,7 @@ function boot(){
  setInterval(tick,30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden){tick();sync()}});addEventListener('focus',()=>{tick();sync()});
  load().then(()=>{applyTheme();applyBg();render();setupBC();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}}).catch(e=>{$('main').textContent='Falha ao iniciar: '+(e&&e.message||e)})}
 
-const api={validDate,vTask,vCat,Store,S,load,saveTask,toggleDone,removeTask,saveCat,removeCat,saveSettings,today,filterTasks,addD,newF,restoreTask,purgeTask,emptyTrash,purgeExpired,nextDate,dow,sections,recLabel,normRec,monthGrid,groupByDue,recompressPhotos,estimateBackupMB,newNote,saveNote,setNoteDeleted,purgeNotes,purgeNote,noteLive,noteTitle,buildBackupAsync,checkStage,compressImage,commitPhotos,commitAtt,readAtt,validateBackup,buildBackup,applyImport,reloadState,backupStatus,completedSeries,punctuality,distribution,windowOf,fmtDT};
+const api={validDate,vTask,vCat,Store,S,load,saveTask,toggleDone,removeTask,saveCat,removeCat,saveSettings,today,filterTasks,addD,newF,restoreTask,purgeTask,emptyTrash,purgeExpired,nextDate,dow,sections,recLabel,normRec,monthGrid,groupByDue,recompressPhotos,mergeBackup,estimateBackupMB,newNote,saveNote,setNoteDeleted,purgeNotes,purgeNote,noteLive,noteTitle,buildBackupAsync,checkStage,compressImage,commitPhotos,commitAtt,readAtt,validInk,inkToImage,validateBackup,buildBackup,applyImport,reloadState,backupStatus,completedSeries,punctuality,distribution,windowOf,fmtDT};
 if(typeof document==='undefined')globalThis.__TAREFAS__=api;else boot();
 })();
 </script>
